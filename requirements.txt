@@ -1,2 +1,6 @@
 fastapi
 uvicorn[standard]
+opentelemetry-distro
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-sqlite3
+opentelemetry-exporter-jaeger

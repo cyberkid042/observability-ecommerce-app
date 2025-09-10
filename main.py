@@ -4,12 +4,37 @@ import logging
 import json
 import uuid
 import time
+import os
+
+# OpenTelemetry imports
+from opentelemetry import trace
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.sqlite3 import SQLite3Instrumentor
+from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.resources import Resource
+
+# Setup OpenTelemetry tracing
+trace.set_tracer_provider(TracerProvider(resource=Resource.create({"service.name": "observability-ecommerce-app"})))
+jaeger_exporter = JaegerExporter(
+    agent_host_name=os.getenv("JAEGER_HOST", "localhost"),
+    agent_port=int(os.getenv("JAEGER_PORT", 6831)),
+)
+span_processor = BatchSpanProcessor(jaeger_exporter)
+trace.get_tracer_provider().add_span_processor(span_processor)
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+
+# Instrument FastAPI
+FastAPIInstrumentor.instrument_app(app)
+
+# Instrument SQLite3
+SQLite3Instrumentor().instrument()
 
 # Middleware for structured JSON logging
 @app.middleware("http")
