@@ -1,10 +1,13 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 import sqlite3
 import logging
 import json
 import uuid
 import time
 import os
+
+# Prometheus imports
+from prometheus_client import Counter, Histogram, generate_latest
 
 # OpenTelemetry imports
 from opentelemetry import trace
@@ -28,6 +31,11 @@ trace.get_tracer_provider().add_span_processor(span_processor)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Prometheus metrics
+request_count = Counter('http_requests_total', 'Total HTTP requests', ['method', 'endpoint', 'status_code'])
+response_latency = Histogram('http_request_duration_seconds', 'HTTP request duration in seconds', ['method', 'endpoint'])
+error_count = Counter('http_errors_total', 'Total HTTP errors', ['method', 'endpoint', 'status_code'])
+
 app = FastAPI()
 
 # Instrument FastAPI
@@ -48,6 +56,13 @@ async def log_requests(request: Request, call_next):
     response = await call_next(request)
     
     process_time = time.time() - start_time
+    
+    # Record Prometheus metrics
+    endpoint = request.url.path
+    request_count.labels(method=request.method, endpoint=endpoint, status_code=response.status_code).inc()
+    response_latency.labels(method=request.method, endpoint=endpoint).observe(process_time)
+    if response.status_code >= 400:
+        error_count.labels(method=request.method, endpoint=endpoint, status_code=response.status_code).inc()
     
     log_data = {
         "request_id": request_id,
@@ -120,3 +135,7 @@ def get_orders():
 @app.get("/error")
 def simulate_error():
     raise HTTPException(status_code=500, detail="Simulated application error")
+
+@app.get("/metrics")
+def metrics():
+    return Response(generate_latest(), media_type="text/plain")
