@@ -1,7 +1,97 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+import sqlite3
+import logging
+import json
+import uuid
+import time
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
+
+# Middleware for structured JSON logging
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    request_id = str(uuid.uuid4())
+    start_time = time.time()
+    
+    # Add request_id to request state for potential use in endpoints
+    request.state.request_id = request_id
+    
+    response = await call_next(request)
+    
+    process_time = time.time() - start_time
+    
+    log_data = {
+        "request_id": request_id,
+        "method": request.method,
+        "url": str(request.url),
+        "status_code": response.status_code,
+        "response_time": f"{process_time:.4f}s"
+    }
+    
+    logger.info(json.dumps(log_data))
+    
+    return response
+
+# Database connection helper
+def get_db():
+    conn = sqlite3.connect('ecommerce.db')
+    conn.row_factory = sqlite3.Row
+    return conn
 
 @app.get("/")
 def read_root():
     return {"Hello": "World"}
+
+@app.get("/products")
+def get_products():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM products")
+    products = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in products]
+
+@app.post("/checkout")
+def checkout(order: dict):
+    product_id = order.get("product_id")
+    quantity = order.get("quantity")
+    
+    if not product_id or not quantity:
+        raise HTTPException(status_code=400, detail="product_id and quantity are required")
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT price FROM products WHERE id = ?", (product_id,))
+    product = cursor.fetchone()
+    
+    if not product:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    price = product[0]
+    total = price * quantity
+    
+    cursor.execute("INSERT INTO orders (product_id, quantity, total) VALUES (?, ?, ?)", (product_id, quantity, total))
+    conn.commit()
+    order_id = cursor.lastrowid
+    conn.close()
+    
+    return {"order_id": order_id, "total": total}
+
+@app.get("/orders")
+def get_orders():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM orders")
+    orders = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in orders]
+
+@app.get("/error")
+def simulate_error():
+    raise HTTPException(status_code=500, detail="Simulated application error")
